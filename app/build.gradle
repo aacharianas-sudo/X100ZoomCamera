@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 7
-        versionName '0.7-auto-manual-focus'
+        versionCode 8
+        versionName '0.8-smooth-hold-zoom'
     }
 
     buildTypes {
