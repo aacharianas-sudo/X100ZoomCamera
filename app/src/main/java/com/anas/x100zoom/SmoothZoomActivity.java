@@ -33,13 +33,6 @@ public class SmoothZoomActivity extends AutoManualFocusActivity {
     private int holdDirection = 0;
     private float holdTargetZoom = 1f;
 
-    private final Runnable beginHoldRunnable = () -> {
-        if (!zoomHolding || holdDirection == 0) return;
-        holdStarted = true;
-        holdTargetZoom = getRequestedZoom();
-        zoomUi.post(continuousZoomRunnable);
-    };
-
     private final Runnable continuousZoomRunnable = new Runnable() {
         @Override public void run() {
             if (!zoomHolding || holdDirection == 0) return;
@@ -47,13 +40,11 @@ public class SmoothZoomActivity extends AutoManualFocusActivity {
             float z = holdTargetZoom;
             float perFrame;
 
-            // Slow, controlled movement near the important 0.6x-3x lens-handoff range.
             if (z < 3f) {
                 perFrame = 0.025f;
             } else if (z < 10f) {
                 perFrame = 0.050f;
             } else {
-                // MainActivity quantizes >10x to 0.5x increments; this speed keeps it cinematic.
                 perFrame = 0.080f;
             }
 
@@ -71,6 +62,13 @@ public class SmoothZoomActivity extends AutoManualFocusActivity {
 
             zoomUi.postDelayed(this, HOLD_FRAME_MS);
         }
+    };
+
+    private final Runnable beginHoldRunnable = () -> {
+        if (!zoomHolding || holdDirection == 0) return;
+        holdStarted = true;
+        holdTargetZoom = getRequestedZoom();
+        zoomUi.post(continuousZoomRunnable);
     };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
