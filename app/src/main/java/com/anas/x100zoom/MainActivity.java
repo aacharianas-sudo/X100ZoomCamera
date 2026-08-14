@@ -6,7 +6,9 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.SurfaceTexture;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.camera2.CameraAccessException;
@@ -16,7 +18,6 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
@@ -29,13 +30,13 @@ import android.provider.MediaStore;
 import android.util.Range;
 import android.util.Size;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -43,30 +44,23 @@ import android.widget.Toast;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 
 public class MainActivity extends Activity {
     private static final int REQ_PERMS = 77;
     private static final Size UHD = new Size(3840, 2160);
     private static final int TARGET_FPS = 60;
     private static final int VIDEO_BITRATE = 100_000_000;
-
-    private static final float UI_TELE_NATIVE = 3.0f;
-    private static final String LENS_ULTRA = "ULTRA";
-    private static final String LENS_MAIN = "MAIN";
-    private static final String LENS_TELE = "TELE";
+    private static final float UI_MIN_ZOOM = 0.6f;
+    private static final float UI_MAX_ZOOM = 30.0f;
 
     private TextureView textureView;
-    private TextView statusView;
+    private TextView zoomLiveView;
+    private TextView infoView;
     private TextView timerView;
     private Button recordButton;
-    private final Map<Float, Button> zoomButtons = new HashMap<>();
+    private ZoomSliderView zoomSlider;
 
     private HandlerThread cameraThread;
     private Handler cameraHandler;
@@ -77,25 +71,21 @@ public class MainActivity extends Activity {
 
     private CameraCharacteristics logicalCharacteristics;
     private String logicalCameraId;
-    private String ultraPhysicalId;
-    private String mainPhysicalId;
-    private String telePhysicalId;
-    private String activePhysicalId;
-    private String activeLensType = LENS_MAIN;
+    private float logicalMinZoom = 1.0f;
+    private float logicalMaxZoom = 10.0f;
+    private float requestedUiZoom = 1.0f;
+    private boolean supports4k60 = false;
+    private boolean supportsHevc = false;
+    private int sensorOrientation = 90;
 
     private MediaRecorder recorder;
     private boolean recording = false;
     private boolean recordingStarting = false;
     private Uri outputUri;
     private android.os.ParcelFileDescriptor outputPfd;
-
-    private float requestedUiZoom = 1.0f;
-    private float logicalMinZoom = 1.0f;
-    private float logicalMaxZoom = 10.0f;
-    private boolean supports4k60 = false;
-    private boolean supportsHevc = false;
-    private int sensorOrientation = 90;
     private long recordStartedAtMs = 0L;
+
+    private final Runnable applyZoomRunnable = this::applyZoomToRepeatingRequest;
 
     private final Runnable timerRunnable = new Runnable() {
         @Override public void run() {
@@ -105,15 +95,6 @@ public class MainActivity extends Activity {
             timerView.postDelayed(this, 500L);
         }
     };
-
-    private static final class LensInfo {
-        final String id;
-        final float focalLength;
-        LensInfo(String id, float focalLength) {
-            this.id = id;
-            this.focalLength = focalLength;
-        }
-    }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -151,94 +132,90 @@ public class MainActivity extends Activity {
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        root.setClipChildren(true);
 
         textureView = new TextureView(this);
         textureView.setSurfaceTextureListener(textureListener);
-        root.addView(textureView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams previewLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        root.addView(textureView, previewLp);
 
-        LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(18), dp(12), dp(18), dp(12));
-        top.setBackgroundColor(0xAA000000);
-
-        TextView left = new TextView(this);
-        left.setText("VIDEO");
-        left.setTextColor(0xFFDDDDDD);
-        left.setTextSize(13f);
-        left.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        top.addView(left, new LinearLayout.LayoutParams(0, dp(54), 1f));
-
-        TextView modeView = new TextView(this);
-        modeView.setText("4K\n60");
-        modeView.setTextColor(Color.WHITE);
-        modeView.setTextSize(12f);
-        modeView.setGravity(Gravity.CENTER);
-        modeView.setTypeface(null, android.graphics.Typeface.BOLD);
-        modeView.setBackground(rounded(0xAA222222, 8));
-        top.addView(modeView, new LinearLayout.LayoutParams(dp(58), dp(48)));
-
-        TextView right = new TextView(this);
-        right.setText("⚙");
-        right.setTextColor(Color.WHITE);
-        right.setTextSize(25f);
-        right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        top.addView(right, new LinearLayout.LayoutParams(0, dp(54), 1f));
-
-        FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, dp(78));
-        topLp.gravity = Gravity.TOP;
-        root.addView(top, topLp);
-
-        statusView = new TextView(this);
-        statusView.setTextColor(Color.WHITE);
-        statusView.setTextSize(12f);
-        statusView.setPadding(dp(10), dp(6), dp(10), dp(6));
-        statusView.setGravity(Gravity.CENTER);
-        statusView.setBackground(rounded(0x77000000, 12));
-        statusView.setText("Starting camera…");
-        FrameLayout.LayoutParams statusLp = new FrameLayout.LayoutParams(
+        TextView modeBadge = new TextView(this);
+        modeBadge.setText("4K  60");
+        modeBadge.setTextColor(Color.WHITE);
+        modeBadge.setTextSize(12f);
+        modeBadge.setGravity(Gravity.CENTER);
+        modeBadge.setTypeface(null, android.graphics.Typeface.BOLD);
+        modeBadge.setPadding(dp(10), dp(5), dp(10), dp(5));
+        modeBadge.setBackground(rounded(0x66000000, 10));
+        FrameLayout.LayoutParams modeLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        statusLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        statusLp.topMargin = dp(88);
-        root.addView(statusView, statusLp);
+        modeLp.gravity = Gravity.TOP | Gravity.START;
+        modeLp.leftMargin = dp(18);
+        modeLp.topMargin = dp(22);
+        root.addView(modeBadge, modeLp);
 
-        LinearLayout bottom = new LinearLayout(this);
-        bottom.setOrientation(LinearLayout.VERTICAL);
-        bottom.setGravity(Gravity.CENTER_HORIZONTAL);
-        bottom.setPadding(dp(10), dp(12), dp(10), dp(24));
-        bottom.setBackgroundColor(0xAA000000);
+        TextView settings = new TextView(this);
+        settings.setText("⚙");
+        settings.setTextColor(Color.WHITE);
+        settings.setTextSize(25f);
+        settings.setGravity(Gravity.CENTER);
+        settings.setBackground(rounded(0x44000000, 20));
+        FrameLayout.LayoutParams settingsLp = new FrameLayout.LayoutParams(dp(46), dp(46));
+        settingsLp.gravity = Gravity.TOP | Gravity.END;
+        settingsLp.rightMargin = dp(14);
+        settingsLp.topMargin = dp(14);
+        root.addView(settings, settingsLp);
 
-        HorizontalScrollView scroll = new HorizontalScrollView(this);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.setFillViewport(true);
-        LinearLayout zoomRow = new LinearLayout(this);
-        zoomRow.setGravity(Gravity.CENTER);
-        zoomRow.setPadding(dp(8), 0, dp(8), 0);
+        zoomLiveView = new TextView(this);
+        zoomLiveView.setText("1X");
+        zoomLiveView.setTextColor(Color.WHITE);
+        zoomLiveView.setTextSize(28f);
+        zoomLiveView.setTypeface(null, android.graphics.Typeface.BOLD);
+        zoomLiveView.setGravity(Gravity.CENTER);
+        zoomLiveView.setShadowLayer(5f, 0f, 1f, Color.BLACK);
+        FrameLayout.LayoutParams zoomLiveLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        zoomLiveLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        zoomLiveLp.topMargin = dp(22);
+        root.addView(zoomLiveView, zoomLiveLp);
 
-        float[] zooms = {0.6f, 1f, 2f, 3f, 5f, 10f, 20f, 30f};
-        for (float z : zooms) {
-            Button b = new Button(this);
-            b.setAllCaps(false);
-            b.setText(formatZoom(z));
-            b.setTextSize(14f);
-            b.setTextColor(z == 1f ? 0xFFFFD54F : Color.WHITE);
-            b.setPadding(0, 0, 0, 0);
-            b.setMinWidth(0);
-            b.setMinimumWidth(0);
-            b.setMinHeight(0);
-            b.setMinimumHeight(0);
-            b.setBackground(circle(z == 1f ? 0xAA332C00 : 0x66000000));
-            b.setOnClickListener(v -> setDesiredZoom(z));
-            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(52), dp(52));
-            blp.setMargins(dp(3), 0, dp(3), 0);
-            zoomRow.addView(b, blp);
-            zoomButtons.put(z, b);
-        }
-        scroll.addView(zoomRow, new HorizontalScrollView.LayoutParams(
-                HorizontalScrollView.LayoutParams.WRAP_CONTENT, dp(58)));
-        bottom.addView(scroll, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(62)));
+        infoView = new TextView(this);
+        infoView.setTextColor(0xFFE6E6E6);
+        infoView.setTextSize(11f);
+        infoView.setGravity(Gravity.CENTER);
+        infoView.setPadding(dp(10), dp(5), dp(10), dp(5));
+        infoView.setBackground(rounded(0x77000000, 10));
+        infoView.setVisibility(View.GONE);
+        FrameLayout.LayoutParams infoLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        infoLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        infoLp.topMargin = dp(64);
+        root.addView(infoView, infoLp);
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setGravity(Gravity.CENTER_HORIZONTAL);
+        controls.setPadding(dp(14), dp(12), dp(14), dp(22));
+        controls.setBackgroundColor(0x55000000);
+
+        LinearLayout zoomControlRow = new LinearLayout(this);
+        zoomControlRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView minus = makeZoomEdgeButton("−");
+        minus.setOnClickListener(v -> nudgeZoom(-1));
+        zoomControlRow.addView(minus, new LinearLayout.LayoutParams(dp(48), dp(58)));
+
+        zoomSlider = new ZoomSliderView(this);
+        zoomSlider.setZoom(requestedUiZoom);
+        zoomControlRow.addView(zoomSlider, new LinearLayout.LayoutParams(0, dp(64), 1f));
+
+        TextView plus = makeZoomEdgeButton("+");
+        plus.setOnClickListener(v -> nudgeZoom(1));
+        zoomControlRow.addView(plus, new LinearLayout.LayoutParams(dp(48), dp(58)));
+
+        controls.addView(zoomControlRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(66)));
 
         timerView = new TextView(this);
         timerView.setText("00:00");
@@ -246,60 +223,70 @@ public class MainActivity extends Activity {
         timerView.setTextSize(14f);
         timerView.setGravity(Gravity.CENTER);
         timerView.setVisibility(View.INVISIBLE);
-        bottom.addView(timerView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(28)));
+        controls.addView(timerView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(30)));
 
         FrameLayout recordWrap = new FrameLayout(this);
-        LinearLayout.LayoutParams rwl = new LinearLayout.LayoutParams(dp(104), dp(104));
-        rwl.topMargin = dp(2);
-        bottom.addView(recordWrap, rwl);
+        LinearLayout.LayoutParams recordWrapLp = new LinearLayout.LayoutParams(dp(108), dp(108));
+        recordWrapLp.topMargin = dp(2);
+        controls.addView(recordWrap, recordWrapLp);
 
         View outer = new View(this);
         GradientDrawable outerShape = circle(Color.TRANSPARENT);
         outerShape.setStroke(dp(4), Color.WHITE);
         outer.setBackground(outerShape);
-        FrameLayout.LayoutParams outerLp = new FrameLayout.LayoutParams(dp(88), dp(88));
+        FrameLayout.LayoutParams outerLp = new FrameLayout.LayoutParams(dp(90), dp(90));
         outerLp.gravity = Gravity.CENTER;
         recordWrap.addView(outer, outerLp);
 
         recordButton = new Button(this);
         recordButton.setText("");
-        recordButton.setBackground(circle(0xFFFF453A));
+        recordButton.setPadding(0, 0, 0, 0);
+        recordButton.setBackground(circle(0xFFFF3B30));
         recordButton.setOnClickListener(v -> {
             if (recording || recordingStarting) stopRecording(); else startRecording();
         });
-        FrameLayout.LayoutParams recLp = new FrameLayout.LayoutParams(dp(72), dp(72));
-        recLp.gravity = Gravity.CENTER;
-        recordWrap.addView(recordButton, recLp);
+        FrameLayout.LayoutParams recordLp = new FrameLayout.LayoutParams(dp(72), dp(72));
+        recordLp.gravity = Gravity.CENTER;
+        recordWrap.addView(recordButton, recordLp);
 
-        TextView hint = new TextView(this);
-        hint.setText("0.6× ultra  •  1×–2× main  •  3×+ tele");
-        hint.setTextColor(0xFFBDBDBD);
-        hint.setTextSize(11f);
-        hint.setGravity(Gravity.CENTER);
-        bottom.addView(hint, new LinearLayout.LayoutParams(
+        TextView videoLabel = new TextView(this);
+        videoLabel.setText("VIDEO");
+        videoLabel.setTextColor(0xFFFFD54F);
+        videoLabel.setTextSize(13f);
+        videoLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+        videoLabel.setGravity(Gravity.CENTER);
+        controls.addView(videoLabel, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(24)));
 
-        FrameLayout.LayoutParams bottomLp = new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams controlsLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        bottomLp.gravity = Gravity.BOTTOM;
-        root.addView(bottom, bottomLp);
+        controlsLp.gravity = Gravity.BOTTOM;
+        root.addView(controls, controlsLp);
+
         setContentView(root);
     }
 
-    private String formatZoom(float z) {
-        if (Math.abs(z - Math.round(z)) < 0.01f) return String.format(Locale.US, "%.0f×", z);
-        return String.format(Locale.US, "%.1f×", z);
+    private TextView makeZoomEdgeButton(String text) {
+        TextView v = new TextView(this);
+        v.setText(text);
+        v.setTextColor(Color.WHITE);
+        v.setTextSize(34f);
+        v.setGravity(Gravity.CENTER);
+        v.setShadowLayer(4f, 0f, 1f, Color.BLACK);
+        return v;
     }
 
-    private void updateZoomButtons() {
-        runOnUiThread(() -> {
-            for (Map.Entry<Float, Button> e : zoomButtons.entrySet()) {
-                boolean selected = Math.abs(e.getKey() - requestedUiZoom) < 0.01f;
-                e.getValue().setTextColor(selected ? 0xFFFFD54F : Color.WHITE);
-                e.getValue().setBackground(circle(selected ? 0xAA332C00 : 0x66000000));
-            }
-        });
+    private void nudgeZoom(int direction) {
+        float step = requestedUiZoom < 10f ? 0.1f : 0.5f;
+        setDesiredZoom(requestedUiZoom + direction * step, true);
+    }
+
+    private String formatLiveZoom(float z) {
+        if (Math.abs(z - Math.round(z)) < 0.001f) {
+            return String.format(Locale.US, "%.0fX", z);
+        }
+        return String.format(Locale.US, "%.1fX", z);
     }
 
     private boolean hasPermissions() {
@@ -319,7 +306,7 @@ public class MainActivity extends Activity {
 
     private void startCameraThread() {
         if (cameraThread != null) return;
-        cameraThread = new HandlerThread("X100CameraV2");
+        cameraThread = new HandlerThread("X100CameraV3");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
     }
@@ -348,9 +335,6 @@ public class MainActivity extends Activity {
             Integer orient = logicalCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             if (orient != null) sensorOrientation = orient;
             inspectLogicalCapabilities();
-            classifyPhysicalLenses();
-            activeLensType = LENS_MAIN;
-            activePhysicalId = mainPhysicalId;
             if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return;
             cameraManager.openCamera(logicalCameraId, cameraStateCallback, cameraHandler);
         } catch (Exception e) {
@@ -369,13 +353,18 @@ public class MainActivity extends Activity {
             int[] caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
             if (caps != null) {
                 for (int cap : caps) {
-                    if (cap == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) score += 1000f;
+                    if (cap == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) {
+                        score += 1000f;
+                    }
                 }
             }
             StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map != null && containsSize(map.getOutputSizes(MediaRecorder.class), UHD)) score += 500f;
             Range<Float> zr = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
-            if (zr != null) score += zr.getUpper();
+            if (zr != null) {
+                score += zr.getUpper();
+                if (zr.getLower() <= 0.6f) score += 100f;
+            }
             if (score > bestScore) {
                 bestScore = score;
                 bestId = id;
@@ -396,39 +385,10 @@ public class MainActivity extends Activity {
         }
         supports4k60 = has4k60(logicalCharacteristics);
         supportsHevc = hasEncoder("video/hevc");
-    }
-
-    private void classifyPhysicalLenses() {
-        ultraPhysicalId = null;
-        mainPhysicalId = null;
-        telePhysicalId = null;
-        List<LensInfo> lensInfos = new ArrayList<>();
-        Set<String> physical = logicalCharacteristics.getPhysicalCameraIds();
-        for (String pid : physical) {
-            try {
-                CameraCharacteristics pc = cameraManager.getCameraCharacteristics(pid);
-                float[] focals = pc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
-                float focal = (focals != null && focals.length > 0) ? focals[0] : Float.NaN;
-                if (!Float.isNaN(focal)) lensInfos.add(new LensInfo(pid, focal));
-            } catch (Exception ignored) {}
-        }
-        lensInfos.sort(Comparator.comparingDouble(a -> a.focalLength));
-        if (lensInfos.size() >= 3) {
-            ultraPhysicalId = lensInfos.get(0).id;
-            mainPhysicalId = lensInfos.get(lensInfos.size() / 2).id;
-            telePhysicalId = lensInfos.get(lensInfos.size() - 1).id;
-        } else if (lensInfos.size() == 2) {
-            mainPhysicalId = lensInfos.get(0).id;
-            telePhysicalId = lensInfos.get(1).id;
-        } else if (lensInfos.size() == 1) {
-            mainPhysicalId = lensInfos.get(0).id;
-        }
-        final String mapText = "IDs U:" + safeId(ultraPhysicalId) + " M:" + safeId(mainPhysicalId) + " T:" + safeId(telePhysicalId);
-        runOnUiThread(() -> statusView.setText("1× MAIN • " + mapText));
-    }
-
-    private String safeId(String id) {
-        return id == null ? "?" : id;
+        runOnUiThread(() -> {
+            if (requestedUiZoom > logicalMaxZoom) showPostCropInfo();
+            else infoView.setVisibility(View.GONE);
+        });
     }
 
     private boolean has4k60(CameraCharacteristics c) {
@@ -453,7 +413,9 @@ public class MainActivity extends Activity {
         MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
         for (MediaCodecInfo info : list.getCodecInfos()) {
             if (!info.isEncoder()) continue;
-            for (String type : info.getSupportedTypes()) if (type.equalsIgnoreCase(mime)) return true;
+            for (String type : info.getSupportedTypes()) {
+                if (type.equalsIgnoreCase(mime)) return true;
+            }
         }
         return false;
     }
@@ -485,43 +447,16 @@ public class MainActivity extends Activity {
             repeatingBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             repeatingBuilder.addTarget(preview);
             configureCommonRequest(repeatingBuilder, false);
-            createSession(Collections.singletonList(preview), false, false);
+            List<Surface> outputs = new ArrayList<>();
+            outputs.add(preview);
+            cameraDevice.createCaptureSession(outputs, sessionCallback(false), cameraHandler);
         } catch (Exception e) {
             showError("Preview setup: " + e.getMessage());
         }
     }
 
-    private void startRecording() {
-        if (cameraDevice == null || recording || recordingStarting) return;
-        if (!supports4k60) toast("4K60 is not clearly advertised; trying Vivo's session anyway.");
-        try {
-            closeSession();
-            prepareRecorder();
-            recordingStarting = true;
-            SurfaceTexture st = textureView.getSurfaceTexture();
-            if (st == null) throw new IllegalStateException("Preview surface unavailable");
-            st.setDefaultBufferSize(1920, 1080);
-            Surface preview = new Surface(st);
-            Surface recordSurface = recorder.getSurface();
-            repeatingBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-            repeatingBuilder.addTarget(preview);
-            repeatingBuilder.addTarget(recordSurface);
-            configureCommonRequest(repeatingBuilder, true);
-            List<Surface> outputs = new ArrayList<>();
-            outputs.add(preview);
-            outputs.add(recordSurface);
-            createSession(outputs, true, true);
-        } catch (Exception e) {
-            recordingStarting = false;
-            showError("Record setup: " + e.getMessage());
-            safeResetRecorder();
-            startPreviewSession();
-        }
-    }
-
-    private void createSession(List<Surface> outputs, boolean forVideo, boolean startRecorderAfterConfigure) throws CameraAccessException {
-        final CameraCaptureSession.StateCallback[] holder = new CameraCaptureSession.StateCallback[1];
-        CameraCaptureSession.StateCallback callback = new CameraCaptureSession.StateCallback() {
+    private CameraCaptureSession.StateCallback sessionCallback(boolean startRecorderAfterConfigure) {
+        return new CameraCaptureSession.StateCallback() {
             @Override public void onConfigured(CameraCaptureSession session) {
                 if (cameraDevice == null) return;
                 captureSession = session;
@@ -537,9 +472,9 @@ public class MainActivity extends Activity {
                             timerView.setText("00:00");
                             timerView.removeCallbacks(timerRunnable);
                             timerView.post(timerRunnable);
+                            recordButton.setBackground(rounded(0xFFFF3B30, 8));
                         });
                     }
-                    updateStatus();
                 } catch (Exception e) {
                     if (startRecorderAfterConfigure) {
                         recordingStarting = false;
@@ -550,134 +485,66 @@ public class MainActivity extends Activity {
             }
 
             @Override public void onConfigureFailed(CameraCaptureSession session) {
-                if (activePhysicalId != null) {
-                    String failed = activePhysicalId;
-                    activePhysicalId = null;
-                    toast("Physical lens " + failed + " rejected; retrying logical camera.");
-                    try {
-                        createNormalSession(outputs, holder[0]);
-                    } catch (Exception e) {
-                        failSession(forVideo, startRecorderAfterConfigure, e.getMessage());
-                    }
-                } else {
-                    failSession(forVideo, startRecorderAfterConfigure, "Camera HAL rejected the session");
+                if (startRecorderAfterConfigure) {
+                    recordingStarting = false;
+                    safeResetRecorder();
                 }
+                showError("Camera HAL rejected the session");
+                if (!recording) startPreviewSession();
             }
         };
-        holder[0] = callback;
-
-        if (activePhysicalId != null) {
-            try {
-                List<OutputConfiguration> configs = new ArrayList<>();
-                for (Surface s : outputs) {
-                    OutputConfiguration oc = new OutputConfiguration(s);
-                    oc.setPhysicalCameraId(activePhysicalId);
-                    configs.add(oc);
-                }
-                cameraDevice.createCaptureSessionByOutputConfigurations(configs, callback, cameraHandler);
-                return;
-            } catch (Exception e) {
-                toast("Physical route unavailable: " + e.getClass().getSimpleName());
-            }
-        }
-        createNormalSession(outputs, callback);
     }
 
-    private void createNormalSession(List<Surface> outputs, CameraCaptureSession.StateCallback callback) throws CameraAccessException {
-        cameraDevice.createCaptureSession(outputs, callback, cameraHandler);
-    }
+    private void setDesiredZoom(float zoom, boolean updateSliderPosition) {
+        float clamped = Math.max(UI_MIN_ZOOM, Math.min(UI_MAX_ZOOM, zoom));
+        clamped = Math.round(clamped * 10f) / 10f;
+        requestedUiZoom = clamped;
 
-    private void failSession(boolean forVideo, boolean wasStartingRecorder, String reason) {
-        if (wasStartingRecorder) {
-            recordingStarting = false;
-            safeResetRecorder();
-        }
-        showError((forVideo ? "Video" : "Preview") + " session failed: " + reason);
-        if (!recording) startPreviewSession();
-    }
+        zoomLiveView.setText(formatLiveZoom(clamped));
+        if (updateSliderPosition && zoomSlider != null) zoomSlider.setZoom(clamped);
+        applyPreviewPostCrop();
 
-    private void rebuildSessionForLensSwitch() {
-        if (cameraDevice == null) return;
-        try {
-            closeSession();
-            SurfaceTexture st = textureView.getSurfaceTexture();
-            if (st == null) return;
-            st.setDefaultBufferSize(1920, 1080);
-            Surface preview = new Surface(st);
-
-            if (recording && recorder != null) {
-                Surface recordSurface = recorder.getSurface();
-                repeatingBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-                repeatingBuilder.addTarget(preview);
-                repeatingBuilder.addTarget(recordSurface);
-                configureCommonRequest(repeatingBuilder, true);
-                List<Surface> outputs = new ArrayList<>();
-                outputs.add(preview);
-                outputs.add(recordSurface);
-                createSession(outputs, true, false);
-            } else {
-                repeatingBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                repeatingBuilder.addTarget(preview);
-                configureCommonRequest(repeatingBuilder, false);
-                createSession(Collections.singletonList(preview), false, false);
-            }
-        } catch (Exception e) {
-            showError("Lens switch: " + e.getMessage());
-        }
-    }
-
-    private void setDesiredZoom(float uiZoom) {
-        requestedUiZoom = uiZoom;
-        String targetLens = lensForZoom(uiZoom);
-        String targetPhysical = physicalIdForLens(targetLens);
-        boolean lensChanged = !targetLens.equals(activeLensType) || !sameId(targetPhysical, activePhysicalId);
-
-        activeLensType = targetLens;
-        activePhysicalId = targetPhysical;
-        updateZoomButtons();
-        updateStatus();
-
-        if (lensChanged && cameraDevice != null) {
-            cameraHandler.post(this::rebuildSessionForLensSwitch);
+        if (logicalCharacteristics != null && clamped > logicalMaxZoom + 0.01f) {
+            showPostCropInfo();
         } else {
-            applyInternalZoom();
+            infoView.setVisibility(View.GONE);
+        }
+
+        if (cameraHandler != null) {
+            cameraHandler.removeCallbacks(applyZoomRunnable);
+            cameraHandler.postDelayed(applyZoomRunnable, 12L);
         }
     }
 
-    private boolean sameId(String a, String b) {
-        return a == null ? b == null : a.equals(b);
+    private void showPostCropInfo() {
+        runOnUiThread(() -> {
+            infoView.setText(String.format(Locale.US,
+                    "Preview %.1fX • camera HAL %.1fX max", requestedUiZoom, logicalMaxZoom));
+            infoView.setVisibility(View.VISIBLE);
+        });
     }
 
-    private String lensForZoom(float z) {
-        if (z < 0.9f) return LENS_ULTRA;
-        if (z < 3.0f) return LENS_MAIN;
-        return LENS_TELE;
+    private float directCameraZoom() {
+        return Math.max(logicalMinZoom, Math.min(requestedUiZoom, logicalMaxZoom));
     }
 
-    private String physicalIdForLens(String lens) {
-        if (LENS_ULTRA.equals(lens)) return ultraPhysicalId;
-        if (LENS_TELE.equals(lens)) return telePhysicalId;
-        return mainPhysicalId;
+    private void applyPreviewPostCrop() {
+        float directMax = logicalCharacteristics == null ? 10f : logicalMaxZoom;
+        float direct = Math.max(UI_MIN_ZOOM, Math.min(requestedUiZoom, directMax));
+        final float extra = requestedUiZoom > direct ? requestedUiZoom / direct : 1f;
+        runOnUiThread(() -> {
+            textureView.setPivotX(textureView.getWidth() / 2f);
+            textureView.setPivotY(textureView.getHeight() / 2f);
+            textureView.setScaleX(extra);
+            textureView.setScaleY(extra);
+        });
     }
 
-    private float internalZoomForCurrentLens() {
-        float internal;
-        if (LENS_ULTRA.equals(activeLensType)) {
-            internal = 1.0f;
-        } else if (LENS_TELE.equals(activeLensType)) {
-            internal = requestedUiZoom / UI_TELE_NATIVE;
-        } else {
-            internal = requestedUiZoom;
-        }
-        return Math.max(1.0f, Math.min(internal, logicalMaxZoom));
-    }
-
-    private void applyInternalZoom() {
+    private void applyZoomToRepeatingRequest() {
         if (repeatingBuilder == null || captureSession == null || logicalCharacteristics == null) return;
         try {
-            setInternalZoomOnBuilder(repeatingBuilder, internalZoomForCurrentLens());
+            setZoomOnBuilder(repeatingBuilder, directCameraZoom());
             captureSession.setRepeatingRequest(repeatingBuilder.build(), null, cameraHandler);
-            updateStatus();
         } catch (Exception e) {
             showError("Zoom rejected: " + e.getMessage());
         }
@@ -691,11 +558,11 @@ public class MainActivity extends Activity {
             if (selected != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selected);
         }
         enableBestStabilization(b);
-        setInternalZoomOnBuilder(b, internalZoomForCurrentLens());
+        setZoomOnBuilder(b, directCameraZoom());
     }
 
-    private void setInternalZoomOnBuilder(CaptureRequest.Builder b, float internalZoom) {
-        float z = Math.max(logicalMinZoom, Math.min(internalZoom, logicalMaxZoom));
+    private void setZoomOnBuilder(CaptureRequest.Builder b, float requested) {
+        float z = Math.max(logicalMinZoom, Math.min(requested, logicalMaxZoom));
         Range<Float> range = logicalCharacteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
         if (range != null) {
             b.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
@@ -750,12 +617,32 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    private void updateStatus() {
-        final float internal = internalZoomForCurrentLens();
-        final String pid = activePhysicalId == null ? "logical" : "ID " + activePhysicalId;
-        final String text = formatZoom(requestedUiZoom) + "  " + activeLensType + " • " + pid +
-                " • sensor crop " + String.format(Locale.US, "%.2f×", internal);
-        runOnUiThread(() -> statusView.setText(text));
+    private void startRecording() {
+        if (cameraDevice == null || recording || recordingStarting) return;
+        if (!supports4k60) toast("4K60 is not clearly advertised; trying Vivo's session anyway.");
+        try {
+            closeSession();
+            prepareRecorder();
+            recordingStarting = true;
+            SurfaceTexture st = textureView.getSurfaceTexture();
+            if (st == null) throw new IllegalStateException("Preview surface unavailable");
+            st.setDefaultBufferSize(1920, 1080);
+            Surface preview = new Surface(st);
+            Surface recordSurface = recorder.getSurface();
+            repeatingBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            repeatingBuilder.addTarget(preview);
+            repeatingBuilder.addTarget(recordSurface);
+            configureCommonRequest(repeatingBuilder, true);
+            List<Surface> outputs = new ArrayList<>();
+            outputs.add(preview);
+            outputs.add(recordSurface);
+            cameraDevice.createCaptureSession(outputs, sessionCallback(true), cameraHandler);
+        } catch (Exception e) {
+            recordingStarting = false;
+            showError("Record setup: " + e.getMessage());
+            safeResetRecorder();
+            startPreviewSession();
+        }
     }
 
     private void prepareRecorder() throws IOException {
@@ -825,6 +712,7 @@ public class MainActivity extends Activity {
                 timerView.removeCallbacks(timerRunnable);
                 timerView.setText("00:00");
                 timerView.setVisibility(View.INVISIBLE);
+                recordButton.setBackground(circle(0xFFFF3B30));
             });
             safeResetRecorder();
             startPreviewSession();
@@ -890,7 +778,8 @@ public class MainActivity extends Activity {
     private void showError(String s) {
         runOnUiThread(() -> {
             Toast.makeText(this, s, Toast.LENGTH_LONG).show();
-            statusView.setText("ERROR • " + s);
+            infoView.setText("ERROR • " + s);
+            infoView.setVisibility(View.VISIBLE);
         });
     }
 
@@ -906,5 +795,111 @@ public class MainActivity extends Activity {
         closeCamera();
         stopCameraThread();
         super.onPause();
+    }
+
+    private final class ZoomSliderView extends View {
+        private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint accentPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint knobFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint knobStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint tickPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float zoom = 1f;
+
+        ZoomSliderView(Context context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            linePaint.setColor(0xCCFFFFFF);
+            linePaint.setStrokeWidth(dp(2));
+            linePaint.setStrokeCap(Paint.Cap.ROUND);
+            accentPaint.setColor(0xFFFFD54F);
+            accentPaint.setStrokeWidth(dp(3));
+            accentPaint.setStrokeCap(Paint.Cap.ROUND);
+            knobFillPaint.setColor(0x66000000);
+            knobStrokePaint.setColor(Color.WHITE);
+            knobStrokePaint.setStyle(Paint.Style.STROKE);
+            knobStrokePaint.setStrokeWidth(dp(2));
+            tickPaint.setColor(0x88FFFFFF);
+            tickPaint.setStrokeWidth(dp(1));
+        }
+
+        void setZoom(float value) {
+            zoom = Math.max(UI_MIN_ZOOM, Math.min(UI_MAX_ZOOM, value));
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float pad = dp(16);
+            float left = pad;
+            float right = getWidth() - pad;
+            float cy = getHeight() / 2f;
+            canvas.drawLine(left, cy, right, cy, linePaint);
+
+            float oneX = xForZoom(1f, left, right);
+            float knobX = xForZoom(zoom, left, right);
+            canvas.drawLine(Math.min(oneX, knobX), cy, Math.max(oneX, knobX), cy, accentPaint);
+
+            float[] marks = {0.6f, 1f, 2f, 3f, 5f, 10f, 20f, 30f};
+            for (float mark : marks) {
+                float x = xForZoom(mark, left, right);
+                canvas.drawLine(x, cy - dp(5), x, cy + dp(5), tickPaint);
+            }
+
+            float r = dp(17);
+            canvas.drawCircle(knobX, cy, r, knobFillPaint);
+            canvas.drawCircle(knobX, cy, r, knobStrokePaint);
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_MOVE:
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                    updateFromTouch(event.getX());
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                    updateFromTouch(event.getX());
+                    return true;
+                default:
+                    return super.onTouchEvent(event);
+            }
+        }
+
+        private void updateFromTouch(float touchX) {
+            float left = dp(16);
+            float right = Math.max(left + 1f, getWidth() - dp(16));
+            float t = (touchX - left) / (right - left);
+            t = Math.max(0f, Math.min(1f, t));
+            float newZoom = zoomForT(t);
+            newZoom = Math.round(newZoom * 10f) / 10f;
+            zoom = newZoom;
+            invalidate();
+            setDesiredZoom(newZoom, false);
+        }
+
+        private float xForZoom(float value, float left, float right) {
+            return left + tForZoom(value) * (right - left);
+        }
+
+        private float tForZoom(float value) {
+            float z = Math.max(UI_MIN_ZOOM, Math.min(UI_MAX_ZOOM, value));
+            final float pivot = 0.42f;
+            if (z <= 1f) {
+                return ((z - UI_MIN_ZOOM) / (1f - UI_MIN_ZOOM)) * pivot;
+            }
+            double p = Math.log(z) / Math.log(UI_MAX_ZOOM);
+            return pivot + (float) p * (1f - pivot);
+        }
+
+        private float zoomForT(float t) {
+            final float pivot = 0.42f;
+            if (t <= pivot) {
+                return UI_MIN_ZOOM + (t / pivot) * (1f - UI_MIN_ZOOM);
+            }
+            float p = (t - pivot) / (1f - pivot);
+            return (float) Math.exp(Math.log(UI_MAX_ZOOM) * p);
+        }
     }
 }
