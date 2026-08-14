@@ -24,12 +24,12 @@ jobs:
         with:
           gradle-version: '9.5.0'
 
-      - name: Build V2 debug APK
+      - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: X100ZoomCamera-V2-debug
+          name: X100ZoomCamera-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
