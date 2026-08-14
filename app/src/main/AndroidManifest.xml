@@ -13,11 +13,13 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@drawable/ic_camera_app"
+        android:roundIcon="@drawable/ic_camera_app"
         android:label="X100 Zoom Camera"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".PhotoVideoActivity"
+            android:name=".V11CameraActivity"
             android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
@@ -25,6 +27,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".PhotoVideoActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".CameraChromeActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".SmoothZoomActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".AutoManualFocusActivity" android:screenOrientation="portrait" android:exported="false" />
