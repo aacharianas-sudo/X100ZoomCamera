@@ -1,24 +1,36 @@
-# X100 Zoom Camera
+# X100 Zoom Camera — V2
 
-Experimental Android Camera2 app for Vivo X100.
+Experimental **video-only** Camera2 app for Vivo X100.
 
-## Goal
+## Interface
 
-Test whether the Vivo X100 Camera2 / vendor HAL accepts zoom beyond the stock Camera app's 10x video UI limit while recording 3840×2160 at 60 fps.
+V2 uses a Vivo-style video layout: full preview, 4K/60 indicator, horizontal zoom buttons, recording timer, and a large red record button. Photo/Portrait/Night modes are intentionally omitted.
 
-## Important
+## Lens policy
 
-This is a separate test app (`com.anas.x100zoom`). It does **not** replace or modify the Vivo system Camera app.
+- **0.6×** → ultrawide physical camera
+- **1× / 2×** → main physical camera
+- **3× and above** → telephoto physical camera
 
-The first build intentionally does not fake 30x with image upscaling. It reports the Camera2 zoom range and sends direct zoom requests only up to the range exposed by the device. If the HAL caps direct zoom, a later GPU post-crop path can be added.
+The app opens the logical rear camera, reads its physical camera IDs, inspects their focal lengths, and maps the shortest focal length to ultrawide and the longest focal length to telephoto.
 
-## First test
+## Why 20× and 30× are different in V2
 
-1. Install the debug APK.
-2. Grant Camera and Microphone permissions.
-3. Note the values shown at the top: camera ID, 4K60 support, zoom ratio range, stabilization modes, and physical camera IDs.
-4. Test preview at 1x / 5x / 10x / 20x / 30x.
-5. Record a short 4K60 clip at several zoom levels.
-6. Send screenshots/results back for the next X100-specific build.
+The first probe proved that the logical X100 Camera2 HAL clamps direct zoom requests to **10×**. V2 therefore does not send a 20× or 30× request to the logical camera.
 
-Videos are stored in `Movies/X100Zoom`.
+Instead, when the telephoto lens is selected, V2 treats 3× as the tele lens native point:
+
+- 3× UI = tele sensor at 1× crop
+- 10× UI = tele sensor at ~3.33× crop
+- 20× UI = tele sensor at ~6.67× crop
+- 30× UI = tele sensor at 10× crop
+
+That keeps the Camera2 request inside the proven 10× HAL range while testing whether physical-camera routing provides the intended telephoto field of view.
+
+## Experimental limitation
+
+Physical-camera output routing is OEM-dependent. If Vivo rejects a physical route, the app falls back to the logical camera rather than crashing and shows that in the on-screen status label.
+
+Lens changes while recording currently rebuild the Camera2 session. If the physical route works on the X100, the next stage can replace that short transition with a seamless dual-sensor/GPU encoder pipeline.
+
+Videos are saved to `Movies/X100Zoom`.
