@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 9
-        versionName '0.9-flash-grid-album'
+        versionCode 10
+        versionName '1.0-photo-gallery-maxmp'
     }
 
     buildTypes {
