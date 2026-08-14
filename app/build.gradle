@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 10
-        versionName '1.0-photo-gallery-maxmp'
+        versionCode 11
+        versionName '1.1-photo-ui-real-100x'
     }
 
     buildTypes {
@@ -20,4 +20,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+dependencies {
+    implementation "androidx.media3:media3-common:1.9.2"
+    implementation "androidx.media3:media3-effect:1.9.2"
+    implementation "androidx.media3:media3-transformer:1.9.2"
 }
