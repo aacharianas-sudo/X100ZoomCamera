@@ -1,7 +1,9 @@
 package com.anas.x100zoom;
 
+import android.Manifest;
 import android.content.ContentUris;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -12,6 +14,7 @@ import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CaptureRequest;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,14 +30,7 @@ import android.widget.Toast;
 
 import java.lang.reflect.Field;
 
-/**
- * V9 camera chrome on top of V8.
- *
- * Adds:
- *  - real Camera2 torch toggle at top-right (replaces settings gear)
- *  - 3x3 rule-of-thirds grid toggle beside flash
- *  - latest X100Zoom media thumbnail at bottom-left
- */
+/** Camera chrome: torch, grid, and system-gallery thumbnail. */
 public class CameraChromeActivity extends SmoothZoomActivity {
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -58,22 +54,17 @@ public class CameraChromeActivity extends SmoothZoomActivity {
                 CaptureRequest.Builder b = privateField("repeatingBuilder", CaptureRequest.Builder.class);
                 CameraCaptureSession s = privateField("captureSession", CameraCaptureSession.class);
                 CameraCharacteristics c = privateField("currentChars", CameraCharacteristics.class);
-
-                boolean flashAvailable = c != null && Boolean.TRUE.equals(
-                        c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
-
+                boolean flashAvailable = c != null && Boolean.TRUE.equals(c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
                 if (lastFlashAvailable == null || lastFlashAvailable != flashAvailable) {
                     lastFlashAvailable = flashAvailable;
                     updateFlashButton(flashAvailable);
                 }
-
                 if (b != null && s != null && (b != lastBuilder || s != lastSession)) {
                     lastBuilder = b;
                     lastSession = s;
                     if (flashEnabled && flashAvailable) applyTorch(true);
                 }
             } catch (Exception ignored) {}
-
             ui.postDelayed(this, 250L);
         }
     };
@@ -81,7 +72,7 @@ public class CameraChromeActivity extends SmoothZoomActivity {
     private final Runnable albumWatcher = new Runnable() {
         @Override public void run() {
             refreshLatestMedia();
-            ui.postDelayed(this, 1300L);
+            ui.postDelayed(this, 1500L);
         }
     };
 
@@ -102,14 +93,11 @@ public class CameraChromeActivity extends SmoothZoomActivity {
         super.onDestroy();
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 
     private void installCameraChrome() {
         View rootContent = findViewById(android.R.id.content);
         if (!(rootContent instanceof ViewGroup)) return;
-
         View settings = findTextView(rootContent, "⚙");
         if (settings != null) settings.setVisibility(View.GONE);
 
@@ -121,10 +109,7 @@ public class CameraChromeActivity extends SmoothZoomActivity {
         gridOverlay.setVisibility(View.GONE);
         gridOverlay.setClickable(false);
         gridOverlay.setFocusable(false);
-        FrameLayout.LayoutParams gridLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT);
-        root.addView(gridOverlay, Math.min(1, root.getChildCount()), gridLp);
+        root.addView(gridOverlay, Math.min(1, root.getChildCount()), new FrameLayout.LayoutParams(-1, -1));
 
         flashButton = makeTopButton("⚡");
         flashButton.setOnClickListener(v -> toggleFlash());
@@ -152,7 +137,7 @@ public class CameraChromeActivity extends SmoothZoomActivity {
         albumThumb.setBackground(thumbBg);
         albumThumb.setClipToOutline(true);
         albumThumb.setOnClickListener(v -> openLatestMedia());
-        albumThumb.setContentDescription("Open latest camera media");
+        albumThumb.setContentDescription("Open device gallery");
         FrameLayout.LayoutParams albumLp = new FrameLayout.LayoutParams(dp(62), dp(62));
         albumLp.gravity = Gravity.BOTTOM | Gravity.START;
         albumLp.leftMargin = dp(20);
@@ -180,29 +165,22 @@ public class CameraChromeActivity extends SmoothZoomActivity {
 
     private void toggleGrid() {
         gridEnabled = !gridEnabled;
-        if (gridOverlay != null) {
-            gridOverlay.setVisibility(gridEnabled ? View.VISIBLE : View.GONE);
-        }
+        if (gridOverlay != null) gridOverlay.setVisibility(gridEnabled ? View.VISIBLE : View.GONE);
         updateGridButton();
     }
 
     private void updateGridButton() {
-        if (gridButton == null) return;
-        gridButton.setTextColor(gridEnabled ? 0xFFFFD54F : Color.WHITE);
-        gridButton.setAlpha(1f);
+        if (gridButton != null) gridButton.setTextColor(gridEnabled ? 0xFFFFD54F : Color.WHITE);
     }
 
     private void toggleFlash() {
         CameraCharacteristics c = privateField("currentChars", CameraCharacteristics.class);
-        boolean available = c != null && Boolean.TRUE.equals(
-                c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
-
+        boolean available = c != null && Boolean.TRUE.equals(c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
         if (!available) {
             Toast.makeText(this, "Flash is unavailable on the active lens.", Toast.LENGTH_SHORT).show();
             updateFlashButton(false);
             return;
         }
-
         flashEnabled = !flashEnabled;
         applyTorch(flashEnabled);
         updateFlashButton(true);
@@ -221,64 +199,59 @@ public class CameraChromeActivity extends SmoothZoomActivity {
             Handler cameraHandler = privateField("cameraHandler", Handler.class);
             CameraCharacteristics c = privateField("currentChars", CameraCharacteristics.class);
             if (b == null || s == null || c == null) return;
-
-            boolean available = Boolean.TRUE.equals(c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE));
-            if (!available) return;
-
+            if (!Boolean.TRUE.equals(c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE))) return;
             b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
-            b.set(CaptureRequest.FLASH_MODE,
-                    enabled ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
+            b.set(CaptureRequest.FLASH_MODE, enabled ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
             s.setRepeatingRequest(b.build(), null, cameraHandler);
         } catch (Exception e) {
             if (enabled) {
                 flashEnabled = false;
-                runOnUiThread(() -> {
-                    updateFlashButton(false);
-                    Toast.makeText(this, "The camera HAL rejected torch mode on this lens.",
-                            Toast.LENGTH_SHORT).show();
-                });
+                runOnUiThread(() -> updateFlashButton(false));
             }
         }
     }
 
-    private void refreshLatestMedia() {
+    private boolean canReadDeviceMedia() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+                    checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Latest photo/video from the entire device MediaStore, not only this app. */
+    protected void refreshLatestMedia() {
+        if (!canReadDeviceMedia()) {
+            showEmptyThumbnail();
+            return;
+        }
         try {
             Uri files = MediaStore.Files.getContentUri("external");
             String[] projection = {
                     MediaStore.Files.FileColumns._ID,
-                    MediaStore.Files.FileColumns.MEDIA_TYPE,
                     MediaStore.Files.FileColumns.MIME_TYPE,
                     MediaStore.Files.FileColumns.DATE_ADDED
             };
-            String selection = MediaStore.Files.FileColumns.RELATIVE_PATH + "=? AND (" +
-                    MediaStore.Files.FileColumns.MEDIA_TYPE + "=? OR " +
+            String selection = "(" + MediaStore.Files.FileColumns.MEDIA_TYPE + "=? OR " +
                     MediaStore.Files.FileColumns.MEDIA_TYPE + "=?)";
             String[] args = {
-                    "Movies/X100Zoom/",
                     String.valueOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO),
                     String.valueOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE)
             };
             String sort = MediaStore.Files.FileColumns.DATE_ADDED + " DESC";
 
-            try (Cursor cursor = getContentResolver().query(
-                    files, projection, selection, args, sort)) {
+            try (Cursor cursor = getContentResolver().query(files, projection, selection, args, sort)) {
                 if (cursor == null || !cursor.moveToFirst()) {
                     showEmptyThumbnail();
                     return;
                 }
-
-                long id = cursor.getLong(cursor.getColumnIndexOrThrow(
-                        MediaStore.Files.FileColumns._ID));
-                String mime = cursor.getString(cursor.getColumnIndexOrThrow(
-                        MediaStore.Files.FileColumns.MIME_TYPE));
+                long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID));
+                String mime = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE));
                 Uri uri = ContentUris.withAppendedId(files, id);
-
                 if (uri.equals(latestMediaUri)) return;
                 latestMediaUri = uri;
                 latestMediaMime = mime;
-
-                Bitmap thumb = getContentResolver().loadThumbnail(
-                        uri, new Size(dp(160), dp(160)), null);
+                Bitmap thumb = getContentResolver().loadThumbnail(uri, new Size(dp(160), dp(160)), null);
                 if (albumThumb != null) {
                     albumThumb.setImageBitmap(thumb);
                     albumThumb.setAlpha(1f);
@@ -299,31 +272,24 @@ public class CameraChromeActivity extends SmoothZoomActivity {
     }
 
     private void openLatestMedia() {
-        if (latestMediaUri == null) {
-            Toast.makeText(this, "No X100 Zoom Camera videos yet.", Toast.LENGTH_SHORT).show();
-            return;
-        }
         try {
             Intent view = new Intent(Intent.ACTION_VIEW);
-            view.setDataAndType(latestMediaUri,
-                    latestMediaMime != null ? latestMediaMime : "video/*");
-            view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (latestMediaUri != null) {
+                view.setDataAndType(latestMediaUri, latestMediaMime != null ? latestMediaMime : "image/*");
+                view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                view.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
+            }
             startActivity(view);
         } catch (Exception e) {
-            Toast.makeText(this, "No gallery app could open this media.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No gallery/album app is available.", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private View getPreviewView() {
-        try {
-            return privateField("textureView", View.class);
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    private View getPreviewView() { return privateField("textureView", View.class); }
 
     @SuppressWarnings("unchecked")
-    private <T> T privateField(String name, Class<T> type) {
+    protected <T> T privateField(String name, Class<T> type) {
         Class<?> cls = getClass();
         while (cls != null) {
             try {
@@ -333,9 +299,7 @@ public class CameraChromeActivity extends SmoothZoomActivity {
                 return value == null ? null : (T) value;
             } catch (NoSuchFieldException e) {
                 cls = cls.getSuperclass();
-            } catch (Exception e) {
-                return null;
-            }
+            } catch (Exception e) { return null; }
         }
         return null;
     }
@@ -358,21 +322,18 @@ public class CameraChromeActivity extends SmoothZoomActivity {
 
     private final class GridOverlay extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
         GridOverlay() {
             super(CameraChromeActivity.this);
             paint.setColor(0x88FFFFFF);
             paint.setStrokeWidth(dp(1));
         }
-
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            float w = getWidth();
-            float h = getHeight();
-            canvas.drawLine(w / 3f, 0f, w / 3f, h, paint);
-            canvas.drawLine(2f * w / 3f, 0f, 2f * w / 3f, h, paint);
-            canvas.drawLine(0f, h / 3f, w, h / 3f, paint);
-            canvas.drawLine(0f, 2f * h / 3f, w, 2f * h / 3f, paint);
+            float w = getWidth(), h = getHeight();
+            canvas.drawLine(w/3f,0,w/3f,h,paint);
+            canvas.drawLine(2*w/3f,0,2*w/3f,h,paint);
+            canvas.drawLine(0,h/3f,w,h/3f,paint);
+            canvas.drawLine(0,2*h/3f,w,2*h/3f,paint);
         }
     }
 }
