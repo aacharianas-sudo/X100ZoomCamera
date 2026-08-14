@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 3
-        versionName '0.3-seamless-logical-zoom'
+        versionCode 4
+        versionName '0.4-tele-handoff-50x-modes'
     }
 
     buildTypes {
