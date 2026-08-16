@@ -74,6 +74,11 @@ public class V12CameraActivity extends V11CameraActivity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    /** Fractional density helper inherited by V13's custom icon renderer. */
+    protected int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     private GradientDrawable rounded12(int color, int radiusDp) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color);
