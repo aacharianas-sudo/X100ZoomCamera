@@ -52,6 +52,8 @@ import java.util.List;
  */
 public class PhotoVideoActivity extends CameraChromeActivity {
     private static final int REQ_MEDIA = 901;
+    private static final String PREFS = "x100_camera_prefs";
+    private static final String PREF_MEDIA_PROMPTED = "media_permission_prompted";
 
     private boolean photoMode = false;
     private boolean maxPhotoMode = false;
@@ -70,20 +72,34 @@ public class PhotoVideoActivity extends CameraChromeActivity {
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
+    /**
+     * Ask automatically only once. Android 13+ can grant only images, only videos,
+     * or limited/selected media access; repeatedly showing the permission dialog on
+     * every camera launch is disruptive and does not improve access.
+     */
     private void requestMediaAccessIfNeeded() {
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_MEDIA_PROMPTED, false)) return;
+
         if (Build.VERSION.SDK_INT >= 33) {
             boolean images = checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED;
             boolean videos = checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
-            if (!images || !videos) {
+            if (!images && !videos) {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_MEDIA_PROMPTED, true).apply();
                 requestPermissions(new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO}, REQ_MEDIA);
+            } else {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_MEDIA_PROMPTED, true).apply();
             }
         } else if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_MEDIA_PROMPTED, true).apply();
             requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_MEDIA);
+        } else {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_MEDIA_PROMPTED, true).apply();
         }
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         if (requestCode == REQ_MEDIA) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_MEDIA_PROMPTED, true).apply();
             new Handler(getMainLooper()).postDelayed(this::refreshLatestMedia, 250L);
             return;
         }
