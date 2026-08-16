@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 15
-        versionName '1.5-video-specific-ui'
+        versionCode 16
+        versionName '1.6-real-ratios-verified-fps-preserve'
     }
 
     buildTypes {
