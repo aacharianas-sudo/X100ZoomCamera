@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 12
-        versionName '1.2-real-photo-ratios-ui'
+        versionCode 13
+        versionName '1.3-x300-ultra-ui'
     }
 
     buildTypes {
