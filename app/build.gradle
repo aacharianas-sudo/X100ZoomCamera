@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 14
-        versionName '1.4-x300-polish-real60-stable-gallery'
+        versionCode 15
+        versionName '1.5-video-specific-ui'
     }
 
     buildTypes {
