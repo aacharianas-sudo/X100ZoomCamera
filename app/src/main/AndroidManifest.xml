@@ -19,7 +19,7 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".V18LogicalTele60Activity"
+            android:name=".V19Real60Activity"
             android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
@@ -27,6 +27,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".V18LogicalTele60Activity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V17HighSpeedActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V16CorrectnessActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V15VideoUiActivity" android:screenOrientation="portrait" android:exported="false" />
