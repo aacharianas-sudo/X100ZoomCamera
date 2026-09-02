@@ -19,7 +19,7 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".V21StockVideoBridgeActivity"
+            android:name=".V22StockVideoUiActivity"
             android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
@@ -27,7 +27,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".V21StockVideoBridgeActivity" android:screenOrientation="portrait" android:exported="false" />\n        <activity android:name=".V20VideoOnlyActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".V21StockVideoBridgeActivity" android:screenOrientation="portrait" android:exported="false" />
+        <activity android:name=".V20VideoOnlyActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V19Real60Activity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V18LogicalTele60Activity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".V17HighSpeedActivity" android:screenOrientation="portrait" android:exported="false" />
