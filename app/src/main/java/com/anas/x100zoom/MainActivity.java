@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
     private static final Size UHD = new Size(3840, 2160);
     private static final Size FHD = new Size(1920, 1080);
     private static final float UI_MIN_ZOOM = 0.6f;
-    private static final float UI_MAX_ZOOM = 50.0f;
+    private static final float UI_MAX_ZOOM = 100.0f;
     private static final float TELE_HANDOFF = 3.0f;
 
     private TextureView textureView;
@@ -852,16 +852,27 @@ public class MainActivity extends Activity {
         recorder.setVideoEncoder(supportsHevc ? MediaRecorder.VideoEncoder.HEVC : MediaRecorder.VideoEncoder.H264);
         recorder.setVideoSize(selectedSize.getWidth(), selectedSize.getHeight());
         recorder.setVideoFrameRate(selectedFps);
-        recorder.setVideoEncodingBitRate(selectedSize.equals(UHD) ? 100_000_000 : 40_000_000);
+        int videoBitrate;
+        if (selectedSize.getWidth() >= 7600) videoBitrate = 180_000_000;
+        else if (selectedSize.getWidth() >= 3800) videoBitrate = 100_000_000;
+        else if (selectedSize.getWidth() >= 1900) videoBitrate = 40_000_000;
+        else videoBitrate = 20_000_000;
+        recorder.setVideoEncodingBitRate(videoBitrate);
         recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
         recorder.setAudioSamplingRate(48_000);
         recorder.setAudioEncodingBitRate(192_000);
         recorder.setOrientationHint(computeOrientationHint());
 
         ContentValues values = new ContentValues();
+        String resolutionLabel;
+        if (selectedSize.getWidth() >= 7600) resolutionLabel = "8K";
+        else if (selectedSize.getWidth() >= 3800) resolutionLabel = "4K";
+        else if (selectedSize.getWidth() >= 1900) resolutionLabel = "1080P";
+        else if (selectedSize.getWidth() >= 1200) resolutionLabel = "720P";
+        else resolutionLabel = selectedSize.getWidth() + "x" + selectedSize.getHeight();
         values.put(MediaStore.Video.Media.DISPLAY_NAME,
-                "X100_" + (selectedSize.equals(UHD) ? "4K" : "1080P") + "_" +
-                        selectedFps + "_" + System.currentTimeMillis() + ".mp4");
+                "X100_" + resolutionLabel + "_" + selectedFps + "_" +
+                        System.currentTimeMillis() + ".mp4");
         values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
         values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/X100Zoom");
         values.put(MediaStore.Video.Media.IS_PENDING, 1);
