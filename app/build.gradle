@@ -10,8 +10,8 @@ android {
         applicationId 'com.anas.x100zoom'
         minSdk 30
         targetSdk 36
-        versionCode 20
-        versionName '2.0-video-only-center-metering-locked60'
+        versionCode 21
+        versionName '2.1-stock-video-vendor-bridge'
     }
 
     buildTypes {
